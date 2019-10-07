@@ -24,32 +24,44 @@ defmodule SetLocale do
     %Config{gettext: gettext, default_locale: default_locale, cookie_key: nil}
   end
 
-  def call(
-        %{
-          params: %{
-            "locale" => requested_locale
-          }
-        } = conn,
-        config
-      ) do
+  def call(%{ params: %{ "locale" => requested_locale } } = conn, config ) do
     if supported_locale?(requested_locale, config) do
-      Gettext.put_locale(config.gettext, requested_locale)
-      assign(conn, :locale, requested_locale)
+      assign_locale(conn, config, requested_locale)
     else
-      path = rewrite_path(conn, requested_locale, config)
+      get_locale_from_cookie(conn, config)
+      |> handle_unknown_locale(conn, config)
+    end
+  end
+
+  def call(%{ assigns: %{ locale: requested_locale } } = conn, config) do
+    assign_locale(conn, config, requested_locale)
+  end
+
+  def call(conn, config) do
+    locale = determine_locale(conn, nil, config)
+
+    assign_locale(conn, config, locale)
+  end
+
+  defp handle_unknown_locale(nil, conn, config) do
+    assign_locale(conn, config, config.default_locale)
+  end
+
+  defp handle_unknown_locale(locale, conn, config) do
+    if locale != config.default_locale do
+      path = rewrite_path(conn, locale, config)
 
       conn
       |> redirect_to(path)
       |> halt
+    else
+      assign_locale(conn, config, locale)
     end
   end
 
-  def call(conn, config) do
-    path = rewrite_path(conn, nil, config)
-
-    conn
-    |> redirect_to(path)
-    |> halt
+  defp assign_locale(conn, config, locale) do
+    Gettext.put_locale(config.gettext, locale)
+    put_locale_into_cookie(conn, config, locale) |> assign(:locale, locale)
   end
 
   defp rewrite_path(%{request_path: request_path} = conn, requested_locale, config) do
@@ -130,7 +142,11 @@ defmodule SetLocale do
   defp get_redirect_path(%{query_string: query_string}, path) when query_string != "", do: path <> "?#{query_string}"
   defp get_redirect_path(_conn, path), do: path
 
-  defp get_locale_from_cookie(conn, config), do: conn.cookies[config.cookie_key]
+  defp get_locale_from_cookie(conn, config), do: Plug.Conn.get_session(conn, config.cookie_key)
+
+  defp put_locale_into_cookie(conn, config, locale) do
+    put_session(conn, config.cookie_key, locale)
+  end
 
   defp get_locale_from_header(conn, gettext) do
     conn
